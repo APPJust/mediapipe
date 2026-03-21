@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高精度 3D 距離測量系統</title>
+    
+    <!-- 引入 MediaPipe Pose 與 Camera Utils CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+    <style>
+        :root {
+            --neon-blue: #00f3ff;
+            --neon-green: #00ff66;
+            --bg-dark: #0a0e17;
+            --panel-bg: rgba(10, 14, 23, 0.65);
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-dark);
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .input_video {
+            display: none; 
+        }
+
+        .output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 10;
+            pointer-events: none; 
+        }
+
+        /* 隱藏/顯示控制按鈕 */
+        #toggle-panel-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: auto;
+            padding: 10px 15px;
+            pointer-events: auto;
+            z-index: 20;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid var(--neon-blue);
+            color: var(--neon-blue);
+        }
+
+        /* 毛玻璃設定面板 */
+        .glass-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 340px;
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(0, 243, 255, 0.3);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 0 20px rgba(0, 243, 255, 0.1);
+            pointer-events: auto; 
+            transition: opacity 0.4s ease, transform 0.4s ease;
+        }
+
+        /* 隱藏狀態 */
+        .glass-panel.hidden {
+            opacity: 0;
+            transform: translateY(-20px) scale(0.95);
+            pointer-events: none;
+        }
+
+        .glass-panel h2 {
+            margin-top: 0;
+            color: var(--neon-blue);
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            border-bottom: 1px solid rgba(0, 243, 255, 0.3);
+            padding-bottom: 10px;
+            text-shadow: 0 0 5px var(--neon-blue);
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 0.9rem;
+            color: #aaa;
+        }
+
+        .control-group input {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--neon-blue);
+            color: var(--neon-green);
+            padding: 8px;
+            border-radius: 5px;
+            font-family: inherit;
+            font-size: 1.1rem;
+            box-sizing: border-box;
+            outline: none;
+        }
+
+        .control-group input:focus {
+            box-shadow: 0 0 10px rgba(0, 243, 255, 0.5);
+        }
+
+        .btn {
+            width: 100%;
+            background: transparent;
+            border: 1px solid var(--neon-green);
+            color: var(--neon-green);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: inherit;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+
+        .btn:hover {
+            background: var(--neon-green);
+            color: #000;
+            box-shadow: 0 0 15px var(--neon-green);
+        }
+
+        .btn:disabled {
+            border-color: #555;
+            color: #555;
+            cursor: not-allowed;
+            background: transparent;
+            box-shadow: none;
+        }
+
+        .status-box {
+            margin-top: 15px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 5px;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .status-uncalibrated { color: #ff3366; }
+        .status-calibrated { color: var(--neon-green); }
+
+        .instructions {
+            margin-top: 15px;
+            font-size: 0.8rem;
+            color: #888;
+        }
+
+        .signature {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 0.85rem;
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        .signature span {
+            color: var(--neon-blue);
+            opacity: 0.7;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: var(--neon-blue);
+            font-size: 1.5rem;
+            text-shadow: 0 0 10px var(--neon-blue);
+            z-index: 100;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading">載入神經網路模型中...</div>
+
+    <video class="input_video" autoplay playsinline></video>
+    <canvas class="output_canvas" id="output_canvas"></canvas>
+
+    <div id="ui-layer">
+        <button id="toggle-panel-btn" class="btn">⚙️ 隱藏面板</button>
+        
+        <div class="glass-panel" id="glass-panel">
+            <h2>系統校正面板 (Calibration)</h2>
+            
+            <div class="control-group">
+                <label for="shoulder-width">1. 輸入實際肩寬 (cm)</label>
+                <input type="number" id="shoulder-width" value="40" step="1" min="20" max="80">
+            </div>
+
+            <div class="instructions">
+                <strong>校正步驟：</strong><br>
+                請確保光線充足。站在距離鏡頭<strong>剛好 100 cm</strong> 的位置，面向鏡頭，然後按下下方按鈕進行焦距捕捉。
+            </div>
+
+            <br>
+            <button id="calibrate-btn" class="btn" disabled>等待模型就緒...</button>
+
+            <div class="status-box" id="status-box">
+                [狀態] <span class="status-uncalibrated">未校正 (Uncalibrated)</span><br>
+                等待執行相機焦距常數 (Focal Length) 計算...
+            </div>
+            
+            <div id="debug-info" style="margin-top:10px; font-size: 0.75rem; color: #666;">
+                焦距常數: N/A<br>
+                軀幹距離: N/A
+            </div>
+        </div>
+        
+        <div class="signature">
+            高精度測距模組 / <span>Designed by 李振偉</span>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * 電腦視覺與 3D 測距演算法核心 (Computer Vision & 3D Depth Estimation)
+         * * 演算法原理：
+         * 1. 針孔相機模型 (Pinhole Camera Model)：
+         * 焦距 (f) / 真實深度 (Z) = 像素寬度 (w) / 真實寬度 (W)
+         * * 2. 校正期 (Calibration Phase)：
+         * - 已知條件：真實寬度 W = 使用者肩寬(cm)、真實深度 Z = 100 cm (固定基準)。
+         * - 測量變數：當下影像中左右肩膀的像素距離 w (Pixel Width)。
+         * - 推導焦距常數：f = (w * Z) / W = (Pixel_w * 100) / 肩寬_cm。
+         * * 3. 實測期 (Measurement Phase)：
+         * - 已知條件：焦距常數 f、真實寬度 W (使用者肩寬)。
+         * - 測量變數：實時捕捉的肩膀像素寬度 w'。
+         * - 反推軀幹深度：D_trunk (cm) = (W * f) / w'。
+         * - 此深度 D_trunk 代表相機到使用者軀幹(臀部/脊椎中心)的絕對距離。
+         * * 4. 局部高精度深度 (Local Point Depth)：
+         * - MediaPipe `poseWorldLandmarks` 提供以「公尺」為單位、原點為臀部中心的 3D 座標。
+         * - 世界座標系中，靠近鏡頭的方向 Z 值為負 (Negative)。
+         * - 鼻尖真實距離 = D_trunk + (鼻尖_World_Z * 100) cm。
+         * - 肩膀真實距離 = D_trunk + (肩膀_World_Z * 100) cm。
+         */
+
+        // --- 語音與音效輔助系統 (Audio & Speech Synthesis) ---
+        let audioCtx;
+        const synth = window.speechSynthesis;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        // 產生基礎音效
+        function playTone(freq, type = 'sine', duration = 0.1, vol = 0.1) {
+            if (!audioCtx) return;
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        // 成功音效提示
+        function playSuccessSound() {
+            playTone(523.25, 'sine', 0.1); // C5
+            setTimeout(() => playTone(659.25, 'sine', 0.1), 100); // E5
+            setTimeout(() => playTone(783.99, 'sine', 0.2), 200); // G5
+        }
+
+        // 語音播報
+        function speak(text) {
+            if (synth.speaking) synth.cancel(); // 停止先前的語音
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'zh-TW';
+            utterance.rate = 1.1; // 稍微加快語速
+            synth.speak(utterance);
+        }
+
+        // --- 核心系統狀態變數 ---
+        let isModelReady = false;
+        let isCalibrated = false;
+        let focalLength = 0; 
+        
+        // --- DOM 元素 ---
+        const videoElement = document.querySelector('.input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        
+        const btnCalibrate = document.getElementById('calibrate-btn');
+        const inputShoulderWidth = document.getElementById('shoulder-width');
+        const statusBox = document.getElementById('status-box');
+        const debugInfo = document.getElementById('debug-info');
+        const loadingScreen = document.getElementById('loading');
+        
+        const togglePanelBtn = document.getElementById('toggle-panel-btn');
+        const glassPanel = document.getElementById('glass-panel');
+
+        // 面板顯示/隱藏切換
+        togglePanelBtn.addEventListener('click', () => {
+            initAudio();
+            playTone(800, 'triangle', 0.05, 0.05); // 切換音效
+            glassPanel.classList.toggle('hidden');
+            if (glassPanel.classList.contains('hidden')) {
+                togglePanelBtn.innerText = '⚙️ 顯示面板';
+            } else {
+                togglePanelBtn.innerText = '⚙️ 隱藏面板';
+            }
+        });
+
+        // 監聽校正按鈕
+        btnCalibrate.addEventListener('click', () => {
+            initAudio();
+            if (!isModelReady) return;
+            
+            playTone(440, 'sine', 0.1); // 按下按鈕音效
+            speak("請保持站立，開始校正距離");
+            
+            // 觸發一次性校正標記，延遲一秒讓使用者站好
+            setTimeout(() => {
+                window.requestCalibration = true; 
+            }, 1000);
+        });
+
+        // 處理 MediaPipe 姿態結果
+        function onResults(results) {
+            if (!isModelReady) {
+                isModelReady = true;
+                loadingScreen.style.display = 'none';
+                btnCalibrate.innerText = '開始校正 (Start Calibration)';
+                btnCalibrate.disabled = false;
+                
+                // 初次載入完成語音 (需瀏覽器自動播放策略允許)
+                setTimeout(() => speak("系統載入完成，請設定肩寬並站在一百公分處進行校正。"), 500);
+            }
+
+            if (canvasElement.width !== results.image.width) {
+                canvasElement.width = results.image.width;
+                canvasElement.height = results.image.height;
+            }
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // 水平翻轉
+            canvasCtx.translate(canvasElement.width, 0);
+            canvasCtx.scale(-1, 1);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (!results.poseLandmarks || !results.poseWorldLandmarks) {
+                canvasCtx.restore();
+                return;
+            }
+
+            const landmarks2D = results.poseLandmarks;       
+            const landmarks3D = results.poseWorldLandmarks;  
+
+            // 11: 左肩, 12: 右肩
+            const leftShoulder2D = landmarks2D[11];
+            const rightShoulder2D = landmarks2D[12];
+            const shoulderPixelWidth = Math.abs(leftShoulder2D.x - rightShoulder2D.x) * canvasElement.width;
+            const actualShoulderWidthCm = parseFloat(inputShoulderWidth.value) || 40;
+
+            // [階段 1] 執行校正演算法
+            if (window.requestCalibration) {
+                // D = 100cm (校正時規定的固定距離)
+                focalLength = (shoulderPixelWidth * 100) / actualShoulderWidthCm;
+                isCalibrated = true;
+                window.requestCalibration = false;
+                
+                statusBox.innerHTML = `[狀態] <span class="status-calibrated">已校正 (Calibrated)</span><br>系統已鎖定相機內部參數，開始執行實時測距。`;
+                btnCalibrate.innerText = '重新校正 (Recalibrate)';
+                
+                // 校正成功音效與語音
+                playSuccessSound();
+                speak("校正成功，系統已開始測量。");
+            }
+
+            // [階段 2] 實時測距演算法
+            let trunkDistanceCm = 0;
+            if (isCalibrated) {
+                trunkDistanceCm = (actualShoulderWidthCm * focalLength) / shoulderPixelWidth;
+                debugInfo.innerHTML = `焦距常數: ${focalLength.toFixed(2)}<br>軀幹距離: ${trunkDistanceCm.toFixed(1)} cm`;
+            }
+
+            canvasCtx.restore(); 
+
+            const getCanvasCoord = (landmark) => {
+                return {
+                    x: (1 - landmark.x) * canvasElement.width,
+                    y: landmark.y * canvasElement.height
+                };
+            };
+
+            const drawHUD = (x, y, label, depthCm) => {
+                if(depthCm === null) return; 
+                
+                const depthText = `${depthCm.toFixed(1)} cm`;
+                const crosshairSize = 10;
+
+                canvasCtx.save();
+                canvasCtx.strokeStyle = 'rgba(0, 243, 255, 0.9)';
+                canvasCtx.lineWidth = 2;
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(x - crosshairSize, y);
+                canvasCtx.lineTo(x + crosshairSize, y);
+                canvasCtx.moveTo(x, y - crosshairSize);
+                canvasCtx.lineTo(x, y + crosshairSize);
+                canvasCtx.stroke();
+
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(x + 5, y - 5);
+                canvasCtx.lineTo(x + 20, y - 20);
+                canvasCtx.lineTo(x + 120, y - 20);
+                canvasCtx.strokeStyle = 'rgba(0, 255, 102, 0.7)';
+                canvasCtx.stroke();
+
+                canvasCtx.fillStyle = '#00ff66';
+                canvasCtx.font = 'bold 16px Courier New';
+                canvasCtx.shadowColor = '#00ff66';
+                canvasCtx.shadowBlur = 5;
+                canvasCtx.fillText(label, x + 25, y - 25);
+                
+                canvasCtx.fillStyle = '#fff';
+                canvasCtx.shadowBlur = 0;
+                canvasCtx.font = '14px Courier New';
+                canvasCtx.fillText(depthText, x + 25, y - 7);
+                canvasCtx.restore();
+            };
+
+            // --- 提取要追蹤的部位並計算其絕對深度 ---
+            
+            // 1. 鼻尖 (Nose) - Landmark 0
+            const nose2D = getCanvasCoord(landmarks2D[0]);
+            let noseDepth = null;
+            if (isCalibrated) {
+                noseDepth = trunkDistanceCm + (landmarks3D[0].z * 100);
+            }
+
+            // 2. 左肩膀 (Left Shoulder) - Landmark 11
+            const leftShoulderCanvas = getCanvasCoord(landmarks2D[11]);
+            let leftShoulderDepth = null;
+            if (isCalibrated) {
+                leftShoulderDepth = trunkDistanceCm + (landmarks3D[11].z * 100);
+            }
+
+            // 3. 右肩膀 (Right Shoulder) - Landmark 12
+            const rightShoulderCanvas = getCanvasCoord(landmarks2D[12]);
+            let rightShoulderDepth = null;
+            if (isCalibrated) {
+                rightShoulderDepth = trunkDistanceCm + (landmarks3D[12].z * 100);
+            }
+
+            // --- 繪製 HUD 數據 ---
+            if (isCalibrated) {
+                drawHUD(nose2D.x, nose2D.y, "鼻尖", noseDepth);
+                drawHUD(leftShoulderCanvas.x, leftShoulderCanvas.y, "左肩膀", leftShoulderDepth);
+                drawHUD(rightShoulderCanvas.x, rightShoulderCanvas.y, "右肩膀", rightShoulderDepth);
+            } else {
+                // 未校正時只畫出特徵點以供確認
+                canvasCtx.fillStyle = 'rgba(255, 51, 102, 0.8)';
+                canvasCtx.beginPath(); canvasCtx.arc(nose2D.x, nose2D.y, 5, 0, 2*Math.PI); canvasCtx.fill();
+                canvasCtx.beginPath(); canvasCtx.arc(leftShoulderCanvas.x, leftShoulderCanvas.y, 5, 0, 2*Math.PI); canvasCtx.fill();
+                canvasCtx.beginPath(); canvasCtx.arc(rightShoulderCanvas.x, rightShoulderCanvas.y, 5, 0, 2*Math.PI); canvasCtx.fill();
+            }
+        }
+
+        const pose = new Pose({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+        }});
+
+        pose.setOptions({
+            modelComplexity: 1, 
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            smoothSegmentation: false,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        pose.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await pose.send({image: videoElement});
+            },
+            width: 1280,
+            height: 720
+        });
+
+        camera.start().catch((err) => {
+            console.error("相機啟動失敗：", err);
+            loadingScreen.innerText = "無法存取相機，請確認權限設定。";
+            loadingScreen.style.color = "#ff3366";
+        });
+    </script>
+</body>
+</html>
